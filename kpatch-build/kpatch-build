@@ -46,6 +46,7 @@ RPMTOPDIR="$CACHEDIR/buildroot"
 VERSIONFILE="$CACHEDIR/version"
 TEMPDIR="$CACHEDIR/tmp"
 ENVFILE="$TEMPDIR/kpatch-build.env"
+GENERATED_CONFIG_FILE="TEMPDIR/config.generated"
 LOGFILE="$CACHEDIR/build.log"
 RELEASE_FILE=/etc/os-release
 DEBUG=0
@@ -155,25 +156,22 @@ verify_patch_files() {
 	[[ $ret == 1 ]] && die "Unsupported changes detected"
 }
 
-apply_patches() {
-	local patch
+generate_config_file() {
+    python3 generate.py $CONFIGFILE $GENERATED_CONFIG_FILE $TARGET_CONFIG 2 >&1 | logger || die "failed to generate config file"
+}
 
-	for patch in "${PATCH_LIST[@]}"; do
-		patch -N -p1 --dry-run < "$patch" 2>&1 | logger || die "$patch file failed to apply"
-		patch -N -p1 < "$patch" 2>&1 | logger || die "$patch file failed to apply"
-		(( APPLIED_PATCHES++ ))
-	done
+apply_patches() {
+    # here we do not apply patch, instead we generate a new config file
+    generate_config_file()
+    [[ -f  $GENERATED_CONFIG_FILE ]] || die "generate the file failed"
+    echo "generate new config file success"
+    mkdir $TEMPDIR/backup && cp $CONFIGFILE $TEMPDIR/bakcup/config.old
+    cp $GENERATED_CONFIG_FILE $CONFIGFILE
 }
 
 remove_patches() {
-	local patch
-	local idx
-
-	for (( ; APPLIED_PATCHES>0; APPLIED_PATCHES-- )); do
-		idx=$(( APPLIED_PATCHES - 1))
-		patch="${PATCH_LIST[$idx]}"
-		patch -p1 -R -d "$BUILDDIR" < "$patch" &> /dev/null
-	done
+    [[ -f $TEMPDIR/backup/config.old ]] && die "can not find the backuped config file"
+    cp $TEMPDIR/backup/config.old $CONFIGFILE
 
 	# If $BUILDDIR was a git repo, make sure git actually sees that
 	# we've reverted our patch(es).
@@ -1190,7 +1188,7 @@ fi
 
 echo "Testing patch file(s)"
 cd "$BUILDDIR" || die
-verify_patch_files
+# verify_patch_files
 apply_patches
 remove_patches
 
@@ -1292,6 +1290,10 @@ fi
 
 # Read as words, no quotes.
 # shellcheck disable=SC2013
+
+# here we do not care the changed intermediate objs
+sed -i '/^\/tmp/d' "$TEMPDIR/changed_objs"
+
 for i in $(cat "$TEMPDIR/changed_objs")
 do
 	mkdir -p "$TEMPDIR/patched/$(dirname "$i")" || die
